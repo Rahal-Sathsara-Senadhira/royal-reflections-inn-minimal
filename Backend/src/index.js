@@ -6,6 +6,7 @@ import authRoutes from "./auth.routes.js";
 import roomsRoutes from "./rooms.routes.js";
 import bookingsRoutes from "./bookings.routes.js";
 import usersRoutes from "./users.routes.js";
+import statsRoutes from "./stats.routes.js";
 
 dotenv.config();
 
@@ -24,6 +25,7 @@ app.get("/health", async (_req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/rooms", roomsRoutes);
+app.use("/api/stats", statsRoutes);
 app.use("/api/bookings", bookingsRoutes);
 app.use("/api/users", usersRoutes); 
 
