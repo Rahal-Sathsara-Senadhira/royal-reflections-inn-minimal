@@ -3,7 +3,7 @@ import { pool } from "./db.js";
 
 const router = Router();
 
-/** helper: overlap check where existing booking is not cancelled */
+/** Helper: is there a booking overlap for this room (excluding cancelled) */
 async function hasConflict(room_id, check_in, check_out) {
   const [rows] = await pool.query(
     `SELECT id FROM bookings
@@ -17,31 +17,42 @@ async function hasConflict(room_id, check_in, check_out) {
 
 /** GET /api/bookings
  *  -> { bookings: [...], rooms: [...], stats: {...} }
+ *  (matches your current schema: rooms.room_number, rooms.type, bookings.total_amount)
  */
 router.get("/", async (_req, res) => {
   try {
+    // Rooms list for selectors
     const [rooms] = await pool.query(
-      `SELECT r.id, r.number, t.name AS type
-       FROM rooms r JOIN room_types t ON t.id = r.type_id
-       ORDER BY r.number`
+      `SELECT id, room_number, type FROM rooms ORDER BY room_number`
     );
 
+    // All bookings with room info
     const [rows] = await pool.query(
-      `SELECT b.id, b.guest_name, b.guest_email, b.room_id, r.number AS room_number,
-              t.name AS room_type, b.check_in, b.check_out, b.status, b.total_price, b.created_at
+      `SELECT
+         b.id,
+         b.guest_name,
+         b.guest_email,
+         b.room_id,
+         r.room_number,
+         r.type AS room_type,
+         b.check_in,
+         b.check_out,
+         b.status,
+         b.total_amount,
+         b.created_at
        FROM bookings b
-       JOIN rooms r ON r.id = b.room_id
-       JOIN room_types t ON t.id = r.type_id
+       LEFT JOIN rooms r ON r.id = b.room_id
        ORDER BY b.check_in DESC, b.id DESC`
     );
 
     const stats = {
       total: rows.length,
       byStatus: {
-        booked: rows.filter(b => b.status === "booked").length,
-        checked_in: rows.filter(b => b.status === "checked_in").length,
+        booked:      rows.filter(b => b.status === "booked").length,
+        confirmed:   rows.filter(b => b.status === "confirmed").length,
+        checked_in:  rows.filter(b => b.status === "checked_in").length,
         checked_out: rows.filter(b => b.status === "checked_out").length,
-        cancelled: rows.filter(b => b.status === "cancelled").length,
+        cancelled:   rows.filter(b => b.status === "cancelled").length,
       },
       upcoming7d: rows.filter(b => {
         const now = new Date();
@@ -57,30 +68,76 @@ router.get("/", async (_req, res) => {
   }
 });
 
+/** GET /api/bookings/recent  -> last 8 bookings (for Dashboard) */
+router.get("/recent", async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT
+         b.id,
+         b.guest_name,
+         b.guest_email,
+         b.check_in,
+         b.check_out,
+         DATEDIFF(b.check_out, b.check_in) AS nights,
+         b.status,
+         b.total_amount AS total,
+         r.room_number,
+         r.type AS room_type
+       FROM bookings b
+       LEFT JOIN rooms r ON r.id = b.room_id
+       ORDER BY b.created_at DESC
+       LIMIT 8`
+    );
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /** POST /api/bookings
- * body: { room_id, guest_name, guest_email?, check_in(YYYY-MM-DD), check_out(YYYY-MM-DD), total_price?, status? }
+ *  body: { room_id, guest_name, guest_email?, check_in (YYYY-MM-DD), check_out (YYYY-MM-DD), total_amount?, status? }
  */
 router.post("/", async (req, res) => {
   try {
-    const { room_id, guest_name, guest_email, check_in, check_out, total_price = 0, status = "booked" } = req.body || {};
+    const {
+      room_id,
+      guest_name,
+      guest_email,
+      check_in,
+      check_out,
+      total_amount = 0,
+      status = "booked"
+    } = req.body || {};
+
     if (!room_id || !guest_name || !check_in || !check_out) {
       return res.status(400).json({ error: "room_id, guest_name, check_in, check_out are required" });
     }
-    const [roomRows] = await pool.query("SELECT id FROM rooms WHERE id = ?", [room_id]);
-    if (!roomRows.length) return res.status(404).json({ error: "Room not found" });
 
+    // room exists?
+    const [roomRows] = await pool.query(
+      "SELECT id FROM rooms WHERE id = ?",
+      [room_id]
+    );
+    if (!roomRows.length) {
+      return res.status(404).json({ error: "Room not found" });
+    }
+
+    // date sanity
     if (new Date(check_out) <= new Date(check_in)) {
       return res.status(400).json({ error: "check_out must be after check_in" });
     }
 
+    // overlap?
     if (await hasConflict(room_id, check_in, check_out)) {
       return res.status(409).json({ error: "Dates conflict with an existing booking" });
     }
 
+    // insert
     await pool.query(
-      `INSERT INTO bookings (room_id, guest_name, guest_email, check_in, check_out, status, total_price)
+      `INSERT INTO bookings
+        (room_id, guest_name, guest_email, check_in, check_out, status, total_amount)
        VALUES (?,?,?,?,?,?,?)`,
-      [room_id, guest_name, guest_email || null, check_in, check_out, status, Number(total_price)]
+      [room_id, guest_name, guest_email || null, check_in, check_out, status, Number(total_amount)]
     );
 
     res.json({ ok: true });
