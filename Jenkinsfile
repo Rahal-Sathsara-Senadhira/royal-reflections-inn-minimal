@@ -19,13 +19,16 @@ pipeline {
         stage('Deploy') {
             steps {
                 sh '''
-                  # Stop & remove previous containers/networks/volumes created by this compose project
+                  echo "Stopping old containers (if any)..."
+                  docker rm -f db_c backend_c frontend_c 2>/dev/null || true
+
+                  echo "Bringing stack down (safe)..."
                   docker compose down --remove-orphans || true
 
-                  # Start again in detached mode (uses the images built in the Build stage)
+                  echo "Starting new containers..."
                   docker compose up -d
 
-                  # Show running containers (useful for evidence/screenshots)
+                  echo "Running containers:"
                   docker ps
                 '''
             }
