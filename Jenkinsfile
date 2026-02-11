@@ -3,6 +3,12 @@ pipeline {
 
     options {
         timestamps()
+        durabilityHint('PERFORMANCE_OPTIMIZED')
+    }
+
+    environment {
+        DOCKER_BUILDKIT = "1"
+        BUILDKIT_PROGRESS = "plain"
     }
 
     stages {
@@ -14,42 +20,50 @@ pipeline {
 
         stage('Build') {
             steps {
-                sh '''
-                  set -eux
+                // retry whole build once if npm/network fails
+                retry(2) {
+                    sh '''
+                      set -euo pipefail
 
-                  # Make BuildKit output visible (less "silent")
-                  export DOCKER_BUILDKIT=1
-                  export BUILDKIT_PROGRESS=plain
+                      # Keep Jenkins log alive during long docker builds
+                      ( while true; do echo "[keepalive] docker build running..."; sleep 20; done ) &
+                      KEEPALIVE_PID=$!
+                      trap 'kill $KEEPALIVE_PID 2>/dev/null || true' EXIT
 
-                  # Keep Jenkins log alive during long builds
-                  ( while true; do echo "[keepalive] build running..."; sleep 20; done ) &
-                  KEEPALIVE_PID=$!
-
-                  docker compose build --no-cache || docker compose build
-
-                  kill $KEEPALIVE_PID || true
-                '''
+                      # IMPORTANT: do NOT use --no-cache (it forces npm to re-download every time)
+                      docker compose build
+                    '''
+                }
             }
         }
 
         stage('Deploy') {
             steps {
                 sh '''
-                  set -eux
-
-                  echo "Stopping old containers (if any)..."
-                  docker rm -f db_c backend_c frontend_c 2>/dev/null || true
+                  set -euo pipefail
 
                   echo "Bringing stack down (safe)..."
                   docker compose down --remove-orphans || true
 
-                  echo "Starting new containers..."
-                  docker compose up -d
+                  echo "Starting (with rebuild if needed)..."
+                  docker compose up -d --build
 
                   echo "Running containers:"
-                  docker ps
+                  docker compose ps
                 '''
             }
+        }
+    }
+
+    post {
+        always {
+            sh '''
+              echo "Disk usage:"
+              df -h || true
+
+              echo "Docker usage:"
+              docker system df || true
+            '''
         }
     }
 }
