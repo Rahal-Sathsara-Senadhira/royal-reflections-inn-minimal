@@ -13,7 +13,7 @@ export default function AuthLayout({ title, subtitle, children }) {
           {children}
         </div>
         <p className="text-center text-xs text-gray-500">
-          Royal Reflections Inn — Admin Portal
+          Royal Reflections Inn — Admin Portal |R|
         </p>
       </div>
     </div>
