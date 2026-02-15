@@ -26,7 +26,7 @@ export default function SignIn() {
   };
 
   return (
-    <AuthLayout title="Sign in" subtitle="Access your admin panel">
+    <AuthLayout title="Rahal Sathsara" subtitle="Access your admin panel">
       <form className="space-y-4" onSubmit={onSubmit}>
         {error && <div className="text-red-600 text-sm">{error}</div>}
         <div>
